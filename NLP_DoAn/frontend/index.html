@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ thống Tư vấn Học vụ AI - HCMUTE</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-shell">
+        <header class="app-header">
+            <h1>Hệ thống hỏi đáp - HCMUTE</h1>
+            <p>Trợ lý hỏi đáp dành cho sinh viên</p>
+        </header>
+
+        <main class="chat-container">
+            <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
+
+            <form id="chatForm" class="chat-input-area">
+                <input
+                    id="questionInput"
+                    type="text"
+                    placeholder="Nhập câu hỏi của bạn..."
+                    autocomplete="off"
+                    required
+                >
+                <select id="modeSelect" aria-label="Chọn chế độ">
+                    <option value="1" selected>Chỉ Retrieval</option>
+                    <option value="2">RAG (top-k + qwen3.5:9b)</option>
+                    <option value="3">Hybrid</option>
+                    <option value="4">Chỉ mô hình sinh (Qwen LoRA)</option>
+                </select>
+                <button id="sendButton" type="submit" aria-label="Gửi câu hỏi">
+                    <span>Gửi</span>
+                    <span class="plane-icon">✈</span>
+                </button>
+            </form>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

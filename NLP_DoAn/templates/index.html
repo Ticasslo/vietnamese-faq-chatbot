@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ thống hỏi đáp FAQ sinh viên - HCMUTE</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="app-shell">
+        <header class="app-header">
+            <h1>Hệ thống Tư vấn Học vụ - HCMUTE</h1>
+            <p>Trợ lý học vụ dành cho sinh viên • PhoBERT + RAG</p>
+        </header>
+
+        <main class="chat-container">
+            <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
+
+            <form id="chatForm" class="chat-input-area">
+                <input
+                    id="questionInput"
+                    type="text"
+                    placeholder="Nhập câu hỏi của bạn..."
+                    autocomplete="off"
+                    required
+                >
+                <select id="modeSelect" aria-label="Chọn chế độ" title="Chọn chế độ trả lời">
+                    <option value="1" selected>Chỉ Retrieval</option>
+                    <option value="2">RAG (top-k + qwen3.5:9b)</option>
+                    <option value="3">Hybrid (dưới ngưỡng: Qwen LoRA)</option>
+                    <option value="4">Chỉ mô hình sinh (Qwen LoRA)</option>
+                </select>
+                <button id="sendButton" type="submit" aria-label="Gửi câu hỏi">
+                    <span>Gửi</span>
+                    <span class="plane-icon">✈</span>
+                </button>
+            </form>
+        </main>
+    </div>
+
+    <script>
+        const chatForm = document.getElementById("chatForm");
+        const questionInput = document.getElementById("questionInput");
+        const chatMessages = document.getElementById("chatMessages");
+        const sendButton = document.getElementById("sendButton");
+        const modeSelect = document.getElementById("modeSelect");
+
+        function appendMessage(text, role) {
+            const message = document.createElement("div");
+            message.classList.add("message", role);
+            message.textContent = text;
+            chatMessages.appendChild(message);
+            scrollToBottom();
+            return message;
+        }
+
+        function appendBotHtml(html, outOfScope) {
+            const message = document.createElement("div");
+            message.classList.add("message", "bot");
+            if (outOfScope) message.classList.add("out-of-scope");
+            message.innerHTML = html;
+            chatMessages.appendChild(message);
+            scrollToBottom();
+            return message;
+        }
+
+        function scrollToBottom() {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function setLoadingState(loading) {
+            sendButton.disabled = loading;
+            questionInput.disabled = loading;
+        }
+
+        function escapeHtml(s) {
+            const d = document.createElement("div");
+            d.textContent = s || "";
+            return d.innerHTML;
+        }
+
+        function buildRetrievalHtml(data) {
+            let h = '<div class="answer-body">' + escapeHtml(data.answer) + '</div>';
+            if (data.question_normalized) {
+                h += '<div class="qa-normalized">Câu hỏi chuẩn hóa: ' + escapeHtml(data.question_normalized) + '</div>';
+            }
+            if (data.question_raw) {
+                h += '<div class="qa-normalized qa-raw">Câu hỏi gốc: ' + escapeHtml(data.question_raw) + '</div>';
+            }
+            if (data.top_k && data.top_k.length && data.best_score !== undefined) {
+                h += '<div class="retrieval-meta">';
+                h += '<div class="score-line">Độ khớp: ' + data.best_score.toFixed(3) + '</div>';
+                data.top_k.slice(0, 5).forEach(function (i) {
+                    var q = i.question || "";
+                    if (q.length > 140) q = q.slice(0, 140) + "…";
+                    h += '<div class="rk-item">[' + i.rank + '] ' + i.score + " — " + escapeHtml(q) + "</div>";
+                });
+                h += "</div>";
+            }
+            return h;
+        }
+
+        async function askApi(question, mode) {
+            const response = await fetch("/ask", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ question: question, mode: mode }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || "Lỗi máy chủ");
+            }
+            return data;
+        }
+
+        chatForm.addEventListener("submit", async function (event) {
+            event.preventDefault();
+            const question = questionInput.value.trim();
+            if (!question) return;
+
+            appendMessage(question, "user");
+            questionInput.value = "";
+            setLoadingState(true);
+
+            const typingMessage = appendMessage("Đang xử lý...", "bot");
+            typingMessage.classList.add("typing");
+
+            try {
+                const mode = parseInt(modeSelect.value, 10);
+                const data = await askApi(question, mode);
+                typingMessage.remove();
+                appendBotHtml(buildRetrievalHtml(data), data.out_of_scope);
+            } catch (error) {
+                typingMessage.remove();
+                appendBotHtml(
+                    '<div class="answer-body">' + escapeHtml(String(error.message || error)) + "</div>",
+                    true
+                );
+            } finally {
+                setLoadingState(false);
+                questionInput.focus();
+            }
+        });
+
+        appendMessage(
+            "Xin chào! Mình là trợ lý hỏi đáp FAQ sinh viên của HCMUTE. Bạn cần hỗ trợ thông tin gì?",
+            "bot"
+        );
+    </script>
+</body>
+</html>
