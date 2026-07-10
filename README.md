@@ -170,4 +170,4 @@ Cần chạy Ollama (ví dụ `ollama run qwen3.5:9b`) khi dùng normalize hoặ
 
 23110300 - TRƯƠNG TẤN SANG
 
-23110327 - HUỲNH NGỌC THẮNGTHẮNG
+23110327 - HUỲNH NGỌC THẮNG
