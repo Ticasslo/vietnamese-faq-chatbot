@@ -1,173 +1,150 @@
-# Đồ án NLP — Hệ thống hỏi đáp FAQ HCMUTE
+# Vietnamese FAQ Chatbot for HCM-UTE Students
 
-## Nội dung đồ án (các “bài” / giai đoạn)
+A question-answering system that helps students of Ho Chi Minh City University of Technology and Engineering (HCM-UTE) find answers from the 2025 Student Handbook. It uses a fine-tuned PhoBERT model to find the most relevant FAQ, and can use an LLM (Qwen) to write the answer.
 
-| Giai đoạn                          | Mô tả                                                                                                   |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| **1. Chuẩn bị & tiền xử lý FAQ**   | Làm sạch CSV gốc (Unicode, emoji, khoảng trắng…).                                                       |
-| **2. Sinh paraphrase**             | Tạo thêm câu hỏi tương đương (Ollama) để tăng dữ liệu huấn luyện retrieval.                             |
-| **3. Fine-tune PhoBERT retrieval** | Huấn luyện contrastive trên cặp câu (paraphrase), đánh giá P@k so với TF-IDF và PhoBERT gốc.            |
-| **4. Fine-tune sinh (tùy chọn)**   | Notebook `finetune_mauV2.ipynb` + dữ liệu `finetune_qwen257B.jsonl` cho Qwen2.5 (LoRA).                 |
-| **5. Demo / Web**                  | CLI (`demo.py`) hoặc giao diện Flask (`app.py`) với nhiều chế độ: chỉ retrieval, RAG, hybrid, chỉ sinh. |
+This is a course project for Natural Language Processing at HCM-UTE (team of 3, 2026). The full report is in Vietnamese: [Nhom02_NLP_BAOCAO_final.pdf](Nhom02_NLP_BAOCAO_final.pdf).
 
----
+![Screenshot of the local web app: the user asks who the rector is and gets the FAQ answer with a 0.92 match score and the top 5 retrieved questions](assets/demo-retrieval.png)
 
-## Cấu trúc thư mục & file
+## Overview
+
+- Built a dataset of 1,148 question-answer pairs from the handbook, then used Qwen3.5-9B (via Ollama) to generate 10,502 paraphrased questions for training.
+- Fine-tuned PhoBERT for semantic search. On 1,150 test questions from FAQs not seen during training, it ranks the correct FAQ first 96.1% of the time, compared to 71.8% for TF-IDF and 73.4% for the original PhoBERT.
+- Fine-tuned Qwen2.5-7B-Instruct with LoRA on a 4-bit base model (0.53% of parameters trained) on a single T4 GPU.
+- Split train, validation and test sets by FAQ group, so all paraphrases of the same question stay in the same set and test results are not inflated.
+- Built a Flask web app with 4 answer modes: retrieval only, RAG, hybrid and generation only.
+
+## How it works
+
+```mermaid
+flowchart TD
+    Q[User question] --> P[Clean text: Unicode NFC, lowercase<br/>rewrite with LLM via Ollama if available]
+    P --> S[Vietnamese word segmentation with PyVi]
+    S --> E[Fine-tuned PhoBERT embedding]
+    E --> V[(ChromaDB vector search, cosine)]
+    V --> R{Answer mode}
+    R -->|1. Retrieval| M1[Top FAQ answer if score >= 0.6, otherwise refuse]
+    R -->|2. RAG| M2[Top 5 FAQs as context for Qwen3.5-9B]
+    R -->|3. Hybrid| M3[Top FAQ if score >= 0.6, otherwise Qwen2.5-7B + LoRA]
+    R -->|4. Generation| M4[Qwen2.5-7B + LoRA only]
+```
+
+| Mode | What it does |
+|---|---|
+| 1. Retrieval | Returns the original FAQ answer when the cosine similarity is at least 0.6. Otherwise it says it cannot answer. |
+| 2. RAG | Sends the top 5 FAQs to Qwen3.5-9B (Ollama) and asks it to answer using only that information. |
+| 3. Hybrid | Uses the FAQ answer when the score is high enough, and falls back to the fine-tuned Qwen2.5-7B when it is not. |
+| 4. Generation | Uses only the fine-tuned Qwen2.5-7B, without retrieval. |
+
+## Results
+
+### Retrieval
+
+Test set: 1,150 paraphrased questions from unseen FAQs, searched against all 1,148 FAQs.
+
+| Metric | TF-IDF | PhoBERT (original) | PhoBERT (fine-tuned) |
+|---|---|---|---|
+| Precision@1 | 71.83% | 73.39% | 96.09% |
+| Precision@3 | 83.13% | 84.52% | 98.78% |
+| Precision@5 | 85.48% | 87.30% | 99.30% |
+| Not in top 5 | 167 | 146 | 8 |
+| Similarity margin (correct minus wrong) | - | 0.188 | 0.757 |
+
+![Rank of the correct FAQ in the top 5 results: fine-tuned PhoBERT ranks 1,105 of 1,150 questions first, compared to 844 for original PhoBERT and 826 for TF-IDF](assets/rank-distribution.png)
+
+After fine-tuning with MultipleNegativesRankingLoss, the average similarity to the correct FAQ goes down a little (0.88 to 0.82), but the similarity to wrong FAQs goes down much more (0.70 to 0.06). The bigger gap between them is what makes the ranking more accurate.
+
+### Answer generation (Qwen2.5-7B-Instruct + LoRA)
+
+| Setting | Value |
+|---|---|
+| Base model | unsloth/Qwen2.5-7B-Instruct-bnb-4bit |
+| LoRA | r=16, alpha=16, dropout=0.05, applied to attention and MLP layers |
+| Trainable parameters | 40.4M of 7.66B (0.53%) |
+| Data split (by FAQ group) | 10,472 train, 587 validation, 591 test |
+| Training | batch size 8 (2 x 4 gradient accumulation), AdamW 8-bit, learning rate 2e-4 with warmup and cosine decay, early stopping; best checkpoint at step 300 |
+| Hardware | 1 NVIDIA T4 16GB on Google Colab, about 70 minutes |
+| Test results | loss 0.988, corpus BLEU-4 4.89 |
+
+## Limitations
+
+- In hybrid mode, questions with a low score are sent to Qwen without any FAQ context, so it can make things up. For example, when asked about today's weather, modes 1 and 2 refuse correctly, but mode 3 invents a forecast. Always giving the model retrieved FAQs, or refusing below a minimum score, would fix this.
+- The generation model on its own is weak (BLEU-4 around 4.9). Its answers read well but are sometimes too general or not exact.
+- The 0.6 threshold was set by hand and was not tuned on the validation set.
+- Some LLM-generated paraphrases are low quality, and the data only covers the 2025 handbook. The university was renamed after that, so the data still uses the old name.
+
+## Tech stack
+
+Python, PyTorch, Hugging Face Transformers, Sentence-Transformers, PhoBERT (vinai/phobert-base-v2), PyVi, ChromaDB, Qwen2.5, PEFT (LoRA), Unsloth, TRL, bitsandbytes, Ollama, scikit-learn, Flask, HTML/CSS/JavaScript
+
+## Project structure
 
 ```
-Các model đã được train và lưu tại gồm phobert_faq_retrieval và qwen25_7b_instruct_lora_best:
-https://drive.google.com/drive/folders/1gjc2Z9rFAPeJAw2zVrQi7U_tLqL5qEsh?usp=sharing
-
 NLP_DoAn/
-├── README.md                    # Tài liệu dự án (file này)
-├── requirements.txt             # Thư viện Python
-│
-├── app.py                       # Web Flask (port 8080) — giao diện chat FAQ
-├── demo.py                      # Logic retrieval, Chroma, Ollama/Local Qwen, prompt
-├── train_phobert_faq.py         # Fine-tune PhoBERT + đánh giá + xuất model
-├── finetune_mauV2.ipynb         # Notebook fine-tune Qwen2.5 (LoRA)
-├── finetune_qwen257B.jsonl      # Dữ liệu instruction (Q/A theo faq_id) cho bước trên
-│
-├── FAQ_HCMUTE_preprocessed.csv  # FAQ đã tiền xử lý (dùng build index / demo)
-├── Data.csv                     # Tên thay thế có thể dùng (xem demo.py)
-│
-├── templates/index.html         # Giao diện Flask
-├── static/style.css             # Style cho app Flask
-├── frontend/                    # Bản frontend tĩnh (HTML/CSS/JS) — có thể mở trực tiếp hoặc tùy chỉnh
-│
-├── Data/
-│   ├── Prepare/                 # CSV/JSONL gốc & paraphrase ban đầu
-│   ├── preprocessing_data/      # preprocess_faq.py, preprocess_paraphrases.py
-│   ├── Generate_data/           # generate_paraphrases.py, generate_strong_paraphrases.py
-│   └── After_Processing_Paraphrase/   # CSV/JSONL sau xử lý (ví dụ 10502 mẫu)
-│
-├── phobert_faq_retrieval/       # Model SentenceTransformer sau train (OUTPUT của train_phobert_faq.py)
-├── qwen25_7b_instruct_lora_best/      # Adapter LoRA Qwen (dùng mode Hybrid / chỉ sinh trong demo)
-├── faq_chroma_phobert_finetuned/      # ChromaDB persistent (tạo khi chạy demo/app)
-├── data/                        # Train/val/test split (tạo bởi train_phobert_faq.py)
-├── eval_phobert/                # Kết quả đánh giá, biểu đồ (khi chạy train đầy đủ)
-└── phobert_faq_retrieval/eval/  # File eval kèm theo model (nếu có)
+├── app.py                    # Flask web app (port 8080)
+├── demo.py                   # Retrieval, answer modes, LLM calls; also runs as a CLI demo
+├── train_phobert_faq.py      # Fine-tune and evaluate PhoBERT (with TF-IDF and original PhoBERT baselines)
+├── finetune_mauV2.ipynb      # Fine-tune Qwen2.5-7B with LoRA on Google Colab
+├── finetune_qwen257B.jsonl   # Question-answer data for Qwen
+├── FAQ_HCMUTE_preprocessed.csv
+├── templates/, static/       # Web interface used by Flask
+├── frontend/                 # Standalone static interface (calls /chat)
+└── Data/
+    ├── Prepare/                      # Original FAQ and first paraphrase set
+    ├── preprocessing_data/           # Text cleaning scripts
+    ├── Generate_data/                # Paraphrase generation with Ollama
+    └── After_Processing_Paraphrase/  # Final 10,502 training pairs
 ```
 
-**Lưu ý:** Một số đường dẫn dữ liệu được **cố định trong code** (ví dụ `train_phobert_faq.py` trỏ tới `FAQ_HCMUTE_paraphrases_10502.csv` ở thư mục gốc; `demo.py` tìm `FAQ_HCMUTE_preprocessed.csv` hoặc `Data.csv`). Khi đổi vị trí file, cần sửa biến cấu hình tương ứng.
+## Run locally
 
----
-
-## Yêu cầu môi trường
-
-- **Python** 3.10+ (khuyến nghị)
-- **GPU NVIDIA + CUDA** (khuyến nghị cho train và cho Qwen LoRA); CPU vẫn chạy được retrieval nhưng chậm hơn
-- **RAM/VRAM** đủ cho Sentence Transformers; Qwen 7B 4-bit cần GPU có VRAM hợp lý
-- **Ollama** (tùy chọn): chỉ cần nếu bật chuẩn hóa câu hỏi bằng LLM hoặc chế độ RAG với `qwen3.5:9b`
-
----
-
-## Cài đặt
+1. Install the dependencies:
 
 ```bash
-cd c:\NLP_DoAn
+cd NLP_DoAn
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-**Tùy chọn:** Cài `matplotlib` nếu muốn script train vẽ biểu đồ loss/kết quả (`train_phobert_faq.py` có nhánh vẽ khi có thư viện).
+On Linux or macOS, activate with `source .venv/bin/activate`.
 
----
+2. Download the trained models from [Google Drive](https://drive.google.com/drive/folders/1gjc2Z9rFAPeJAw2zVrQi7U_tLqL5qEsh?usp=sharing) and put them in `NLP_DoAn/`:
 
-## Luồng xử lý dữ liệu (tóm tắt)
-
-1. **`Data/preprocessing_data/preprocess_faq.py`**  
-   Đọc `FAQ_HCMUTE.csv` (trong thư mục chạy script) → xuất `FAQ_HCMUTE_preprocessed.csv`.
-
-2. **`Data/Generate_data/generate_paraphrases.py`** (cần Ollama)  
-   Sinh paraphrase → `FAQ_HCMUTE_paraphrases.jsonl` / `.csv`.
-
-3. Các bước gộp / làm sạch thêm có thể dùng `preprocess_paraphrases.py`, `generate_strong_paraphrases.py` và thư mục `After_Processing_Paraphrase` tùy pipeline bạn đã thiết lập.
-
-4. **`train_phobert_faq.py`**  
-   Đọc file paraphrase (mặc định `FAQ_HCMUTE_paraphrases_10502.csv` / `.jsonl` nếu đặt đúng tên ở thư mục gốc) → huấn luyện → **`./phobert_faq_retrieval`**.
-
-5. **`demo.py` / `app.py`**  
-   Load encoder → embed FAQ từ CSV → lưu/lấy collection Chroma **`hcmute_faq`** trong `./faq_chroma_phobert_finetuned`.
-
----
-
-## Huấn luyện PhoBERT retrieval
-
-Đảm bảo file dữ liệu trùng với biến trong `train_phobert_faq.py` (`DATA_CSV`, `DATA_JSONL`, `DATA_FAQ`, …). Sau đó:
-
-```bash
-python train_phobert_faq.py
+```
+NLP_DoAn/phobert_faq_retrieval/          # needed for all modes
+NLP_DoAn/qwen25_7b_instruct_lora_best/   # only needed for modes 3 and 4
 ```
 
-Kết quả: thư mục **`phobert_faq_retrieval`**, log/đánh giá trong **`eval_phobert/`** và **`data/`** (split train/val/test).
+3. Optional: start Ollama for question rewriting and mode 2.
 
----
+```bash
+ollama run qwen3.5:9b
+```
 
-## Fine-tune Qwen (LoRA)
-
-- Mở và chạy **`finetune_mauV2.ipynb`** theo từng ô (cấu hình base model, LoRA, dữ liệu).
-- Dữ liệu mẫu định dạng instruction: **`finetune_qwen257B.jsonl`** (`instruction`, `input`, `output`, `faq_id`).
-- Model adapter sau huấn luyện thường lưu vào thư mục dạng **`qwen25_7b_instruct_lora_best/`** (đã có trong repo nếu bạn commit sẵn).
-
----
-
-## Chạy demo
-
-### 1) Giao diện web (Flask)
+4. Start the web app and open http://127.0.0.1:8080
 
 ```bash
 python app.py
 ```
 
-- Trình duyệt: **`http://127.0.0.1:8080`** (hoặc máy khác trong mạng: `http://<IP-máy>:8080` vì server bind `0.0.0.0`).
-- Cần có **`phobert_faq_retrieval/`** và file FAQ (**`FAQ_HCMUTE_preprocessed.csv`** hoặc **`Data.csv`**) để build/load index.
+Modes 3 and 4 need an NVIDIA GPU because the 7B model is loaded in 4-bit.
 
-### 2) Dòng lệnh (`demo.py`)
+To train again: run `python train_phobert_faq.py` for PhoBERT, and open `finetune_mauV2.ipynb` on Google Colab (T4) for Qwen.
 
-```bash
-python demo.py
-```
+## Team
 
-Chế độ mặc định và ngưỡng nằm trong **`demo.py`** (`DEMO_MODE`, `THRESHOLD`, `TOP_K`, …).
+- Huỳnh Thanh Nhân
+- Trương Tấn Sang
+- Huỳnh Ngọc Thắng
 
----
+We worked on all parts together, from collecting the data to training the models and writing the report.
 
-## Các chế độ trả lời (`DEMO_MODE` / chọn trên web)
+## Acknowledgements
 
-| Mode  | Ý nghĩa                                                                                       |
-| ----- | --------------------------------------------------------------------------------------------- |
-| **1** | Chỉ **retrieval**: điểm cosine ≥ ngưỡng → trả lời từ FAQ; thấp hơn → thông báo ngoài phạm vi. |
-| **2** | **RAG**: lấy top-k FAQ làm ngữ cảnh, sinh câu trả lời qua **Ollama** (`qwen3.5:9b`).          |
-| **3** | **Hybrid**: nếu điểm thấp, thử **Qwen2.5 + LoRA cục bộ** (không bắt buộc top-k).              |
-| **4** | Chỉ **mô hình sinh** (Qwen LoRA), có sampling — phù hợp thử nghiệm.                           |
+- FAQ data from the HCM-UTE 2025 Student Handbook (published 03/10/2025).
+- [PhoBERT](https://github.com/VinAIResearch/PhoBERT) by VinAI Research, [Qwen2.5](https://github.com/QwenLM/Qwen2.5) by Alibaba Cloud, [Unsloth](https://github.com/unslothai/unsloth).
 
-**Cấu hình liên quan trong `demo.py`:**
+## License
 
-- `USE_LLM_NORMALIZE`: bật chuẩn hóa câu hỏi qua Ollama trước khi embed.
-- `OLLAMA_URL`, `OLLAMA_MODEL`: phục vụ normalize và mode RAG.
-- `LOCAL_QWEN_LORA_DIR`, `LOCAL_QWEN_BASE_MODEL`: cho mode 3/4.
-
-Cần chạy Ollama (ví dụ `ollama run qwen3.5:9b`) khi dùng normalize hoặc mode 2.
-
----
-
-## Gợi ý khắc phục sự cố
-
-| Hiện tượng                               | Hướng xử lý                                                                                                                                                       |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Không tìm thấy ./phobert_faq_retrieval` | Chạy `train_phobert_faq.py` hoặc copy model vào đúng đường dẫn.                                                                                                   |
-| Lỗi không đọc được CSV FAQ               | Đặt `FAQ_HCMUTE_preprocessed.csv` hoặc `Data.csv` ở thư mục gốc project (hoặc sửa `DATA_PATH` trong `demo.py`).                                                   |
-| RAG / normalize lỗi kết nối              | Kiểm tra Ollama đang chạy và `OLLAMA_URL` đúng (`http://localhost:11434/api/generate`).                                                                           |
-| Mode 3/4 lỗi LoRA                        | Kiểm tra tồn tại `qwen25_7b_instruct_lora_best/`, đủ RAM/VRAM, và dependency `peft`, `transformers`, `bitsandbytes` (Windows có thể cần cài đặt bổ sung tùy máy). |
-
----
-
-## Tác giả / môn học
-
-23110280 - HUỲNH THANH NHÂN
-
-23110300 - TRƯƠNG TẤN SANG
-
-23110327 - HUỲNH NGỌC THẮNG
+[MIT](LICENSE)

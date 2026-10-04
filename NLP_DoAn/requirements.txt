@@ -1,4 +1,4 @@
-# Runtime: demo.py, app.py, demo_pdf.py, train_phobert_faq.py
+# Runtime: demo.py, app.py, train_phobert_faq.py
 numpy>=1.21.0
 pandas>=1.5.0
 chromadb>=0.4.0

@@ -15,8 +15,8 @@ from typing import Any
 
 #Cấu hình
 # Bộ paraphrase gộp (CSV/JSONL cùng nội dung: sentence1, sentence2, faq_id)
-DATA_CSV = "FAQ_HCMUTE_paraphrases_10502.csv"
-DATA_JSONL = "FAQ_HCMUTE_paraphrases_10502.jsonl"
+DATA_CSV = "Data/After_Processing_Paraphrase/FAQ_HCMUTE_paraphrases_10502.csv"
+DATA_JSONL = "Data/After_Processing_Paraphrase/FAQ_HCMUTE_paraphrases_10502.jsonl"
 DATA_FAQ = "FAQ_HCMUTE_preprocessed.csv"  
 MODEL_NAME = "vinai/phobert-base-v2"
 OUTPUT_DIR = "./phobert_faq_retrieval"
@@ -278,7 +278,7 @@ def _build_st_dataset(df: pd.DataFrame) -> Any:
 
 
 def _get_faq_path():
-    for p in [DATA_FAQ, "Data.csv"]:
+    for p in [DATA_FAQ]:
         if Path(p).exists():
             return p
     return None

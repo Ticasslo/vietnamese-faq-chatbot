@@ -304,7 +304,7 @@ def llm_generate_answer(question: str, top_k_metadatas: list, use_local: bool = 
 
 
 def _load_faq_data():
-    for path in [DATA_PATH, "FAQ_HCMUTE_preprocessed.csv", "Data.csv"]:
+    for path in [DATA_PATH, "FAQ_HCMUTE_preprocessed.csv"]:
         if Path(path).exists():
             df = pd.read_csv(path, encoding="utf-8")
             q_col = "question" if "question" in df.columns else "Question"
