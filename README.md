@@ -4,6 +4,8 @@ A question-answering system that helps students of Ho Chi Minh City University o
 
 This is a course project for Natural Language Processing at HCM-UTE (team of 3, 2026). The full report is in Vietnamese: [Nhom02_NLP_BAOCAO_final.pdf](Nhom02_NLP_BAOCAO_final.pdf).
 
+Trained models on Hugging Face: [phobert-hcmute-faq-retrieval](https://huggingface.co/TicassloThang/phobert-hcmute-faq-retrieval) (retrieval) and [qwen2.5-7b-hcmute-faq-lora](https://huggingface.co/TicassloThang/qwen2.5-7b-hcmute-faq-lora) (LoRA adapter).
+
 ![Screenshot of the local web app: the user asks who the rector is and gets the FAQ answer with a 0.92 match score and the top 5 retrieved questions](assets/demo-retrieval.png)
 
 ## Overview
@@ -109,12 +111,14 @@ pip install -r requirements.txt
 
 On Linux or macOS, activate with `source .venv/bin/activate`.
 
-2. Download the trained models from [Google Drive](https://drive.google.com/drive/folders/1gjc2Z9rFAPeJAw2zVrQi7U_tLqL5qEsh?usp=sharing) and put them in `NLP_DoAn/`:
+2. Download the trained models from Hugging Face into `NLP_DoAn/`:
 
+```bash
+hf download TicassloThang/phobert-hcmute-faq-retrieval --local-dir phobert_faq_retrieval
+hf download TicassloThang/qwen2.5-7b-hcmute-faq-lora --local-dir qwen25_7b_instruct_lora_best
 ```
-NLP_DoAn/phobert_faq_retrieval/          # needed for all modes
-NLP_DoAn/qwen25_7b_instruct_lora_best/   # only needed for modes 3 and 4
-```
+
+The first one is needed for all modes, the second only for modes 3 and 4. The `hf` command comes with `pip install huggingface_hub`. The same models are also on [Google Drive](https://drive.google.com/drive/folders/1gjc2Z9rFAPeJAw2zVrQi7U_tLqL5qEsh?usp=sharing).
 
 3. Optional: start Ollama for question rewriting and mode 2.
 
